@@ -1,0 +1,26 @@
+node_modules/
+dist/
+release/
+bin/
+
+# Binario que descarga prebuild
+resources/yt-dlp.exe
+resources/yt-dlp
+resources/yt-dlp_macos
+
+# Datos locales / sensibles
+*.db
+*.db-journal
+settings.json
+*cookies*.txt
+window-state.json
+
+# Logs y SO
+*.log
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp

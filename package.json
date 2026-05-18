@@ -1,0 +1,86 @@
+{
+  "name": "vinyl",
+  "version": "0.1.0",
+  "description": "Reproductor de música local con backend yt-dlp",
+  "author": "Eduardo Castro",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "electron": "electron .",
+    "fetch:ytdlp": "node scripts/fetch-ytdlp.js",
+    "fetch:ytdlp:force": "node scripts/fetch-ytdlp.js --force",
+    "build:vite": "vite build",
+    "build": "npm run fetch:ytdlp && npm run build:vite && electron-builder",
+    "build:portable": "npm run fetch:ytdlp && npm run build:vite && electron-builder --win portable",
+    "build:installer": "npm run fetch:ytdlp && npm run build:vite && electron-builder --win nsis",
+    "start": "electron ."
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "youtube-sr": "^4.3.11",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.0.4",
+    "@vitejs/plugin-react": "^4.3.3",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.0.1",
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
+    "postcss": "^8.4.47",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwindcss": "^3.4.14",
+    "vite": "^5.4.10",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "com.eduardocastro.vinyl",
+    "productName": "Vinyl",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/yt-dlp.exe",
+        "to": "yt-dlp.exe"
+      },
+      {
+        "from": "imgs/logo/vinyl.png",
+        "to": "imgs/logo/vinyl.png"
+      }
+    ],
+    "win": {
+      "icon": "imgs/logo/vinyl.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Vinyl"
+    },
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**/*"
+    ]
+  }
+}
