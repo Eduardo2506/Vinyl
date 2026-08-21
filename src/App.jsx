@@ -106,6 +106,7 @@ export default function App() {
     () => Number(localStorage.getItem('panelW')) || 320
   )
   const reqIdRef = useRef(0)
+  const omicronHandlerRef = useRef(null)
   const refreshLiked = useLiked((s) => s.refresh)
   const refreshPlaylists = usePlaylists((s) => s.refresh)
   const refreshSaved = useSaved((s) => s.refresh)
@@ -235,6 +236,286 @@ export default function App() {
     }, 400)
     return () => clearTimeout(timer)
   }, [q])
+
+
+  const _norm = (s) =>
+    (s || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .trim()
+  const _lev = (a, b) => {
+    const m = a.length, n = b.length
+    if (!m) return n
+    if (!n) return m
+    const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0))
+    for (let i = 0; i <= m; i++) dp[i][0] = i
+    for (let j = 0; j <= n; j++) dp[0][j] = j
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        const c = a[i - 1] === b[j - 1] ? 0 : 1
+        dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + c)
+      }
+    }
+    return dp[m][n]
+  }
+
+  const _findPlaylist = (lists, query) => {
+    const q = _norm(query)
+    if (!q || !lists?.length) return null
+    let hit = lists.find((l) => _norm(l.name).includes(q))
+    if (hit) return hit
+    const tol = Math.max(1, Math.ceil(q.length * 0.3))
+    let best = null, bestDist = Infinity
+    for (const l of lists) {
+      const d = _lev(_norm(l.name), q)
+      if (d < bestDist) { best = l; bestDist = d }
+    }
+    return bestDist <= tol ? best : null
+  }
+
+  omicronHandlerRef.current = async (cmd) => {
+    const { action, query } = cmd || {}
+    const params = cmd?.params || {}
+    const p = usePlayer.getState()
+
+    try {
+      switch (action) {
+        case 'play':
+        case 'search': {
+          const term = (query || '').trim()
+          if (!term) return
+          skipCommitResetRef.current = true
+          setQ(term)
+          setSearchCommitted(true)
+          if (action === 'play') {
+            const r = await window.api.search(term)
+            const videos = (r || []).filter((x) => x.type === 'video')
+            if (videos.length) p.playTrack(videos[0], videos, 0)
+          }
+          break
+        }
+
+        case 'playpause':
+          p.togglePlay()
+          break
+        case 'pause':
+        case 'stop':
+          if (p.isPlaying) p.togglePlay()
+          break
+        case 'resume':
+          if (!p.isPlaying && p.current) p.togglePlay()
+          break
+
+        case 'next':
+          p.next()
+          break
+        case 'prev':
+          p.prev()
+          break
+
+        case 'like':
+        case 'unlike':
+          if (p.current) useLiked.getState().toggle(p.current)
+          break
+
+        case 'volume': {
+          const raw = Number(params.level)
+          if (Number.isFinite(raw)) {
+            const v = raw > 1 ? raw / 100 : raw
+            p.setVolume(Math.max(0, Math.min(1, v)))
+          }
+          break
+        }
+        case 'mute':
+          if (!p.muted) p.toggleMute()
+          break
+        case 'unmute':
+          if (p.muted) p.toggleMute()
+          break
+
+        case 'repeat':
+          p.cycleRepeat()
+          break
+
+        case 'mini': {
+          const state = (params.state || 'open').toLowerCase()
+          if (state === 'close' || state === 'closed' || state === 'off') {
+            await window.api.closeMini?.()
+            setMiniOpen(false)
+          } else {
+            await window.api.openMini?.()
+            setMiniOpen(true)
+          }
+          break
+        }
+
+        case 'fullplayer': {
+          const state = (params.state || 'toggle').toLowerCase()
+          if (state === 'close' || state === 'closed' || state === 'off') {
+            setFullScreen(false)
+          } else if (state === 'open' || state === 'on') {
+            setFullScreen(true)
+          } else {
+            setFullScreen((v) => !v)
+          }
+          break
+        }
+
+        case 'fullscreen': {
+          const state = (params.state || 'toggle').toLowerCase()
+          const isFs = await window.api.isFullscreen?.()
+          const want =
+            state === 'on'  || state === 'open'  ? true  :
+            state === 'off' || state === 'close' ? false :
+            !isFs
+          if (want !== isFs) await window.api.toggleFullscreen?.()
+          break
+        }
+
+        case 'playlist': {
+          const name = (params.name || query || '').trim()
+          if (!name) return
+          const lists = await window.api.listPlaylists()
+          const match = _findPlaylist(lists, name)
+          if (!match) return
+          const tracks = await window.api.getPlaylistTracks(match.id)
+          if (tracks && tracks.length) {
+            const raw = Number(params.index)
+            const i = Number.isFinite(raw)
+              ? Math.max(0, Math.min(tracks.length - 1, Math.trunc(raw) - 1))
+              : 0
+            p.playTrack(tracks[i], tracks, i)
+          }
+          await refreshPlaylists()
+          break
+        }
+
+        case 'removefromplaylist': {
+          const pname = (params.name || '').trim()
+          if (!pname) return
+          const lists = await window.api.listPlaylists()
+          const match = _findPlaylist(lists, pname)
+          if (!match) return
+          const tracks = await window.api.getPlaylistTracks(match.id)
+          if (!tracks || !tracks.length) return
+
+          const term = (query || params.track || '').trim().toLowerCase()
+          let target = null
+          if (term) {
+            target = tracks.find(
+              (t) => (t.title || '').toLowerCase().includes(term) ||
+                     (t.author || '').toLowerCase().includes(term)
+            )
+          } else if (Number.isFinite(Number(params.index))) {
+            const i = Math.max(0, Math.min(tracks.length - 1, Math.trunc(Number(params.index)) - 1))
+            target = tracks[i]
+          } else if (p.current) {
+            target = tracks.find((t) => t.id === p.current.id)
+          }
+          if (target) {
+            await window.api.removeFromPlaylist(match.id, target.id)
+            await refreshPlaylists()
+          }
+          break
+        }
+
+        case 'addtoplaylist': {
+          if (!p.current) return
+          const rawName = (params.name || query || '').trim()
+          if (!rawName) return
+          let lists = await window.api.listPlaylists()
+          let match = _findPlaylist(lists, rawName)
+          if (!match) {
+            await window.api.createPlaylist(rawName)
+            lists = await window.api.listPlaylists()
+            match = _findPlaylist(lists, rawName) || (lists || [])[0]
+          }
+          if (match) {
+            await window.api.addToPlaylist(match.id, p.current)
+            await refreshPlaylists()
+          }
+          break
+        }
+
+        case 'likedlist': {
+          const liked = await window.api.listLiked()
+          if (liked && liked.length) {
+            const raw = Number(params.index)
+            const i = Number.isFinite(raw)
+              ? Math.max(0, Math.min(liked.length - 1, Math.trunc(raw) - 1))
+              : 0
+            p.playTrack(liked[i], liked, i)
+          }
+          break
+        }
+
+        case 'library': {
+          const dl = await window.api.listDownloads()
+          if (!dl || !dl.length) return
+          let i = 0
+          const term = (query || params.name || '').trim().toLowerCase()
+          if (term) {
+            const idx = dl.findIndex(
+              (d) => (d.title || '').toLowerCase().includes(term) ||
+                     (d.author || '').toLowerCase().includes(term)
+            )
+            if (idx >= 0) i = idx
+          } else if (Number.isFinite(Number(params.index))) {
+            i = Math.max(0, Math.min(dl.length - 1, Math.trunc(Number(params.index)) - 1))
+          }
+          p.playTrack(dl[i], dl, i)
+          await refreshLib()
+          break
+        }
+
+        case 'delete_download': {
+          const term = (query || params.name || '').trim().toLowerCase()
+          const dl = await window.api.listDownloads()
+          if (!dl || !dl.length) return
+          let target = null
+          if (term) {
+            target = dl.find(
+              (d) => (d.title || '').toLowerCase().includes(term) ||
+                     (d.author || '').toLowerCase().includes(term)
+            )
+          } else if (p.current) {
+            target = dl.find((d) => d.id === p.current.id)
+          }
+          if (target) {
+            await window.api.deleteDownload(target.id)
+            await refreshLib()
+          }
+          break
+        }
+
+        case 'download': {
+          const term = (query || '').trim()
+          if (term) {
+            const r = await window.api.search(term)
+            const v = (r || []).find((x) => x.type === 'video')
+            if (v) window.api.download(v).catch((e) => console.error('download:', e))
+          } else if (p.current) {
+            window.api.download(p.current).catch((e) => console.error('download:', e))
+          }
+          break
+        }
+
+        default:
+          console.warn('Omicron: acción desconocida', action)
+      }
+    } catch (err) {
+      console.error('Omicron handler error:', err)
+    }
+  }
+
+  useEffect(() => {
+    const off = window.api.onOmicronCommand?.((cmd) =>
+      omicronHandlerRef.current?.(cmd)
+    )
+    window.api.omicronReady?.()
+    return off
+  }, [])
 
   function selectView(v) {
     setView(v)
@@ -2813,7 +3094,7 @@ function PlaylistView({ playlistId }) {
 
   useEffect(() => {
     refresh()
-  }, [playlistId])
+  }, [playlistId, playlists])
 
   async function removeTrack(track) {
     await window.api.removeFromPlaylist(playlistId, track.id)

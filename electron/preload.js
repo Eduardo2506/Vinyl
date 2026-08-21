@@ -92,5 +92,15 @@ contextBridge.exposeInMainWorld('api', {
     const handler = (_e, action) => cb(action)
     ipcRenderer.on('thumbar:action', handler)
     return () => ipcRenderer.removeListener('thumbar:action', handler)
+  },
+
+  ytdlpVersion: () => ipcRenderer.invoke('ytdlp:version'),
+  ytdlpUpdate: () => ipcRenderer.invoke('ytdlp:update'),
+
+  omicronReady: () => ipcRenderer.send('omicron:ready'),
+  onOmicronCommand: (cb) => {
+    const handler = (_e, cmd) => cb(cmd)
+    ipcRenderer.on('omicron:command', handler)
+    return () => ipcRenderer.removeListener('omicron:command', handler)
   }
 })

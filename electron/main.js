@@ -22,13 +22,113 @@ const {
   getStreamUrl,
   download,
   getPlaylistVideos,
-  getArtistData
+  getArtistData,
+  currentVersion,
+  ensureLatest,
+  ensureLatestInBackground
 } = require('./ytdlp.js')
 const dbApi = require('./db.js')
 
 const isDev = !app.isPackaged
 let mainWindow = null
 let miniWindow = null
+
+let rendererReady = false
+let pendingOmicronCommand = null
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', (_event, argv) => {
+    focusMainWindow()
+    deliverFromArgv(argv)
+  })
+}
+
+if (process.defaultApp) {
+  if (process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient('vinyl', process.execPath, [
+      path.resolve(process.argv[1])
+    ])
+  }
+} else {
+  app.setAsDefaultProtocolClient('vinyl')
+}
+
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  const cmd = parseVinylUrl(url)
+  if (cmd) deliverOmicron(cmd)
+})
+
+ipcMain.on('omicron:ready', () => {
+  rendererReady = true
+  if (pendingOmicronCommand) {
+    const cmd = pendingOmicronCommand
+    pendingOmicronCommand = null
+    deliverOmicron(cmd)
+  }
+})
+
+const VALID_OMICRON_ACTIONS = new Set([
+  'play', 'search',
+  'playpause', 'pause', 'resume', 'stop',
+  'next', 'prev',
+  'like', 'unlike',
+  'volume', 'mute', 'unmute',
+  'repeat',
+  'mini',
+  'fullplayer',
+  'fullscreen',
+  'playlist', 'addtoplaylist', 'removefromplaylist',
+  'likedlist',
+  'library',
+  'download', 'delete_download'
+])
+
+function parseVinylUrl(urlStr) {
+  if (typeof urlStr !== 'string' || !urlStr.startsWith('vinyl://')) return null
+  try {
+    const u = new URL(urlStr)
+    let action = (u.hostname || '').toLowerCase()
+    if (!action) {
+      action = (u.pathname || '').replace(/^\/+/, '').split('/')[0].toLowerCase()
+    }
+    if (!VALID_OMICRON_ACTIONS.has(action)) return null
+    const params = {}
+    for (const [k, v] of u.searchParams) params[k] = v
+    return { action, query: params.q || '', params }
+  } catch {
+    return null
+  }
+}
+
+function focusMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+}
+
+function deliverOmicron(cmd) {
+  if (!cmd || !cmd.action) return
+  if (mainWindow && !mainWindow.isDestroyed() && rendererReady) {
+    focusMainWindow()
+    mainWindow.webContents.send('omicron:command', cmd)
+  } else {
+    pendingOmicronCommand = cmd
+  }
+}
+
+function deliverFromArgv(argv) {
+  const urlArg = (argv || []).find(
+    (a) => typeof a === 'string' && a.startsWith('vinyl://')
+  )
+  if (!urlArg) return
+  const cmd = parseVinylUrl(urlArg)
+  if (cmd) deliverOmicron(cmd)
+}
 
 function windowStatePath() {
   return path.join(app.getPath('userData'), 'window-state.json')
@@ -55,8 +155,6 @@ function saveWindowState(win) {
   try {
     const isMax = win.isMaximized()
     const isFs = win.isFullScreen()
-    // Si está maximizado/fullscreen, getBounds() devuelve el tamaño actual;
-    // queremos persistir el tamaño "normal" para restaurarlo correctamente.
     const bounds = isMax || isFs ? win.getNormalBounds() : win.getBounds()
     const state = { ...bounds, maximized: isMax, fullscreen: isFs }
     fs.writeFileSync(windowStatePath(), JSON.stringify(state))
@@ -96,6 +194,8 @@ function createWindow() {
   })
   win.setMenuBarVisibility(false)
   mainWindow = win
+
+  win.webContents.on('did-start-loading', () => { rendererReady = false })
 
   if (saved?.maximized) win.maximize()
   if (saved?.fullscreen) win.setFullScreen(true)
@@ -144,7 +244,9 @@ app.whenReady().then(() => {
     return net.fetch(pathToFileURL(resolved).toString())
   })
   dbApi.initDb()
+  ensureLatestInBackground()
   createWindow()
+  deliverFromArgv(process.argv)
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
@@ -381,6 +483,15 @@ ipcMain.handle('shell:openMusicFolder', () => {
 })
 
 // ---------- Settings (panel de configuración) ----------
+ipcMain.handle('ytdlp:version', () => currentVersion().catch(() => null))
+ipcMain.handle('ytdlp:update', async () => {
+  try {
+    return await ensureLatest({ force: true })
+  } catch (err) {
+    return { error: err.message }
+  }
+})
+
 ipcMain.handle('settings:get', () => settings.getSettings())
 
 ipcMain.handle('settings:set', (_e, key, value) => {
