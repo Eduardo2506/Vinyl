@@ -36,10 +36,21 @@ if (!fs.existsSync(resourcesDir)) fs.mkdirSync(resourcesDir, { recursive: true }
 
 const outPath = path.join(resourcesDir, target.file)
 
+const MAX_AGE_DAYS = 14
+
 if (fs.existsSync(outPath) && !FORCE) {
-  const sizeMb = (fs.statSync(outPath).size / 1024 / 1024).toFixed(2)
-  console.log(`fetch-ytdlp: ${target.file} ya existe (${sizeMb} MB). Pasa --force para re-descargar.`)
-  process.exit(0)
+  const stat = fs.statSync(outPath)
+  const ageDays = (Date.now() - stat.mtimeMs) / 86400000
+  if (ageDays <= MAX_AGE_DAYS) {
+    const sizeMb = (stat.size / 1024 / 1024).toFixed(2)
+    console.log(
+      `fetch-ytdlp: ${target.file} ya existe (${sizeMb} MB, ${ageDays.toFixed(0)} dias). Pasa --force para re-descargar.`
+    )
+    process.exit(0)
+  }
+  console.log(
+    `fetch-ytdlp: ${target.file} tiene ${ageDays.toFixed(0)} dias (max ${MAX_AGE_DAYS}); re-descargando.`
+  )
 }
 
 console.log(`fetch-ytdlp: descargando ${target.url}`)

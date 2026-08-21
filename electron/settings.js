@@ -37,7 +37,8 @@ function getSettings() {
     musicDir: s.musicDir || defaultMusicDir(),
     lucidMode: s.lucidMode === true,
     cookiesBrowser: s.cookiesBrowser || 'none',
-    cookiesFile: s.cookiesFile || ''
+    cookiesFile: s.cookiesFile || '',
+    ytdlpCheckedAt: s.ytdlpCheckedAt || 0
   }
 }
 

@@ -7,19 +7,30 @@ const settings = require('./settings.js')
 
 const execFileP = promisify(execFile)
 
+const EXE = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp'
+
+function managedBin() {
+  return path.join(app.getPath('userData'), 'bin', EXE)
+}
+
+function bundledBin() {
+  if (app.isPackaged) return path.join(process.resourcesPath, EXE)
+  return path.join(__dirname, '..', 'resources', EXE)
+}
+
 function resolveYtdlpBin() {
   if (process.env.YTDLP_BIN) return process.env.YTDLP_BIN
-  if (app.isPackaged) {
-    const bundled = path.join(process.resourcesPath, 'yt-dlp.exe')
-    if (fs.existsSync(bundled)) return bundled
-  } else {
-    // En dev también probamos resources/ por si existe, para testear el flujo "como empaquetado"
-    const devBundled = path.join(__dirname, '..', 'resources', 'yt-dlp.exe')
-    if (fs.existsSync(devBundled)) return devBundled
+  const managed = managedBin()
+  const bundled = bundledBin()
+  if (fs.existsSync(managed)) {
+    if (!fs.existsSync(bundled)) return managed
+    if (fs.statSync(managed).mtimeMs >= fs.statSync(bundled).mtimeMs) return managed
   }
+  if (fs.existsSync(bundled)) return bundled
   return 'yt-dlp'
 }
-const YTDLP_BIN = resolveYtdlpBin()
+
+let YTDLP_BIN = resolveYtdlpBin()
 
 const VALID_BROWSERS = new Set(['chrome', 'firefox', 'edge', 'brave', 'opera', 'vivaldi', 'chromium', 'safari'])
 function cookieArgs() {
@@ -349,11 +360,78 @@ async function getArtistData({ channelId, name }) {
   return { tracks, albums, channelId: resolvedChannelId, thumbnail: artistThumb }
 }
 
+// ---------- Auto-actualización de yt-dlp ----------
+// YouTube cambia los formatos cada pocas semanas y un binario viejo devuelve
+// URLs que googlevideo responde con 403: la app deja de reproducir sin dar
+// ningún error. Por eso comprobamos una vez al día si hay versión nueva.
+
+const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
+const RELEASE_API = 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest'
+const RELEASE_DOWNLOAD = `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${EXE}`
+
+async function currentVersion(bin = YTDLP_BIN) {
+  const { stdout } = await execFileP(bin, ['--no-update', '--version'])
+  return stdout.trim()
+}
+
+// Las versiones de yt-dlp son fechas (2026.08.19), así que comparar como
+// texto ya da el orden correcto.
+function isNewer(remote, local) {
+  return !!remote && !!local && remote > local
+}
+
+async function ensureLatest({ force = false } = {}) {
+  const last = settings.getSettings().ytdlpCheckedAt || 0
+  if (!force && Date.now() - last < UPDATE_CHECK_INTERVAL_MS) return { skipped: true }
+  settings.setSetting('ytdlpCheckedAt', Date.now())
+
+  const local = await currentVersion()
+
+  const res = await fetch(RELEASE_API, {
+    headers: { 'User-Agent': 'Vinyl', Accept: 'application/vnd.github+json' }
+  })
+  if (!res.ok) throw new Error(`GitHub HTTP ${res.status}`)
+  const remote = (await res.json()).tag_name
+
+  if (!isNewer(remote, local)) return { updated: false, version: local }
+
+  const dir = path.join(app.getPath('userData'), 'bin')
+  fs.mkdirSync(dir, { recursive: true })
+  const tmp = path.join(dir, `${EXE}.download`)
+
+  const dl = await fetch(RELEASE_DOWNLOAD, { headers: { 'User-Agent': 'Vinyl' } })
+  if (!dl.ok) throw new Error(`descarga HTTP ${dl.status}`)
+  fs.writeFileSync(tmp, Buffer.from(await dl.arrayBuffer()))
+  if (process.platform !== 'win32') fs.chmodSync(tmp, 0o755)
+
+  const downloaded = await currentVersion(tmp).catch(() => null)
+  if (downloaded !== remote) {
+    try { fs.unlinkSync(tmp) } catch {}
+    throw new Error(`binario descargado inválido (reportó "${downloaded}")`)
+  }
+
+  fs.renameSync(tmp, managedBin())
+  YTDLP_BIN = resolveYtdlpBin()
+
+  return { updated: true, from: local, version: remote }
+}
+
+function ensureLatestInBackground() {
+  ensureLatest()
+    .then((r) => {
+      if (r.updated) console.log(`yt-dlp actualizado: ${r.from} → ${r.version}`)
+    })
+    .catch((err) => console.warn('No se pudo actualizar yt-dlp:', err.message))
+}
+
 module.exports = {
   search,
   getStreamUrl,
   download,
   musicDir,
   getPlaylistVideos,
-  getArtistData
+  getArtistData,
+  currentVersion,
+  ensureLatest,
+  ensureLatestInBackground
 }
