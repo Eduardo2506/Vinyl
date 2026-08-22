@@ -7,12 +7,16 @@
   "scripts": {
     "dev": "vite",
     "electron": "electron .",
+    "dev:app": "concurrently -k \"npm:dev\" \"wait-on tcp:5173 && npm run electron\"",
     "fetch:ytdlp": "node scripts/fetch-ytdlp.js",
     "fetch:ytdlp:force": "node scripts/fetch-ytdlp.js --force",
+    "fetch:ffmpeg": "node scripts/fetch-ffmpeg.js",
+    "fetch:ffmpeg:force": "node scripts/fetch-ffmpeg.js --force",
+    "fetch:bin": "npm run fetch:ytdlp && npm run fetch:ffmpeg",
     "build:vite": "vite build",
-    "build": "npm run fetch:ytdlp && npm run build:vite && electron-builder",
-    "build:portable": "npm run fetch:ytdlp && npm run build:vite && electron-builder --win portable",
-    "build:installer": "npm run fetch:ytdlp && npm run build:vite && electron-builder --win nsis",
+    "build": "npm run fetch:bin && npm run build:vite && electron-builder",
+    "build:portable": "npm run fetch:bin && npm run build:vite && electron-builder --win portable",
+    "build:installer": "npm run fetch:bin && npm run build:vite && electron-builder --win nsis",
     "start": "electron ."
   },
   "dependencies": {
@@ -49,6 +53,10 @@
       {
         "from": "resources/yt-dlp.exe",
         "to": "yt-dlp.exe"
+      },
+      {
+        "from": "resources/ffmpeg.exe",
+        "to": "ffmpeg.exe"
       },
       {
         "from": "imgs/logo/vinyl.png",

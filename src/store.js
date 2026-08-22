@@ -12,24 +12,52 @@ export const usePlayer = create((set, get) => ({
   restartTick: 0,
   dominantColor: null,
   setDominantColor: (c) => set({ dominantColor: c }),
+  playbackError: null,
+  clearPlaybackError: () => set({ playbackError: null }),
 
   playTrack: async (track, queue = null, index = null) => {
     const q = queue || [track]
     const i = index ?? q.findIndex((t) => t.id === track.id)
-    set({ queue: q, index: i, current: { ...track }, isPlaying: true })
+    set({ queue: q, index: i, current: { ...track }, isPlaying: true, playbackError: null })
     try {
       useRecent.getState().push(track)
     } catch {}
     try {
       const local = track.localPath || track.file_path
-      const streamUrl = local
-        ? 'localfile://media/' + encodeURIComponent(local)
-        : await window.api.getStreamUrl(track.id)
-      if (get().current?.id === track.id) {
-        set({ current: { ...track, streamUrl } })
+      if (local) {
+        set({ current: { ...track, streamUrl: 'localfile://media/' + encodeURIComponent(local) } })
+        return
       }
+      const res = await window.api.getStreamUrl(track.id)
+      if (get().current?.id !== track.id) return
+      if (res?.error) {
+        set({ isPlaying: false, playbackError: res.error })
+        return
+      }
+      set({ current: { ...track, streamUrl: res.url } })
     } catch (err) {
       console.error('Stream error:', err)
+      if (get().current?.id === track.id) {
+        set({ isPlaying: false, playbackError: 'No se pudo reproducir esta canción.' })
+      }
+    }
+  },
+
+  refreshStream: async () => {
+    const track = get().current
+    if (!track || track.localPath || track.file_path) return false
+    try {
+      const res = await window.api.getStreamUrl(track.id, { force: true })
+      if (get().current?.id !== track.id) return false
+      if (res?.error) {
+        set({ isPlaying: false, playbackError: res.error })
+        return false
+      }
+      set({ current: { ...track, streamUrl: res.url } })
+      return true
+    } catch {
+      set({ isPlaying: false, playbackError: 'No se pudo reproducir esta canción.' })
+      return false
     }
   },
 

@@ -66,6 +66,8 @@ Vinyl es una aplicación de escritorio (Electron + React) para escuchar música 
 2. Doble click. Windows SmartScreen avisará ("Editor desconocido") — *Más información → Ejecutar de todos modos*. La app no está firmada digitalmente porque firmarla requiere un certificado de pago.
 3. Listo. La versión portable se ejecuta sin instalar; el instalador NSIS crea acceso directo.
 
+No hace falta instalar nada más: yt-dlp y ffmpeg vienen dentro. Con conexión a internet ya puedes buscar, escuchar y descargar.
+
 Datos de usuario (biblioteca, descargas, configuración) se guardan en `%APPDATA%\Vinyl\`.
 
 ---
@@ -132,9 +134,8 @@ A partir de aquí yt-dlp irá autenticado y los errores 429 desaparecen. El arch
 ### Requisitos
 
 - **Node.js 18+**
-- **ffmpeg** en el `PATH` (yt-dlp lo necesita para convertir el audio a m4a)
-  - Windows: `winget install ffmpeg`
-- *(opcional)* yt-dlp en el `PATH` — si no, el script `fetch:ytdlp` descarga el binario adecuado a `resources/` antes de cada build.
+
+Nada más: yt-dlp y ffmpeg se descargan solos a `resources/` antes de cada build (`npm run fetch:bin`) y viajan dentro del `.exe`, así que el usuario final no tiene que instalar nada.
 
 ### Setup
 
@@ -143,6 +144,14 @@ git clone <url-del-repo>
 cd Vinyl
 npm install
 ```
+
+Para arrancar la app en desarrollo (levanta Vite y Electron a la vez):
+
+```bash
+npm run dev:app
+```
+
+`npm run electron` por su cuenta abre una ventana en negro: en modo desarrollo carga `http://localhost:5173`, que sirve Vite.
 
 `better-sqlite3` se compila contra Electron. Si falla:
 
@@ -153,19 +162,25 @@ npx electron-rebuild
 ### Desarrollo
 
 ```bash
-npm run dev       # Vite en localhost:5173 (en una terminal)
-npm run electron  # ventana Electron apuntando a Vite (en otra terminal)
+npm run dev:app   # Vite + Electron a la vez (lo normal)
+```
+
+O por separado, en dos terminales:
+
+```bash
+npm run dev       # Vite en localhost:5173
+npm run electron  # ventana Electron apuntando a Vite
 ```
 
 ### Build
 
 ```bash
-npm run build:portable    # un .exe portable autónomo (~93 MB)
-npm run build:installer   # instalador NSIS
+npm run build:portable    # un .exe portable autónomo (~138 MB)
+npm run build:installer   # instalador NSIS (~138 MB)
 npm run build             # ambos
 ```
 
-Resultado en `release/`. El script `fetch:ytdlp` se encarga de descargar `yt-dlp.exe` automáticamente la primera vez.
+Resultado en `release/`. `fetch:bin` descarga `yt-dlp.exe` y `ffmpeg.exe` a `resources/` la primera vez; ambos se empaquetan dentro del `.exe`. yt-dlp se re-descarga si el binario local tiene más de 14 días, porque YouTube cambia los formatos cada pocas semanas.
 
 ### Estructura
 

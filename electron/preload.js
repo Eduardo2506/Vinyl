@@ -2,7 +2,8 @@ const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('api', {
   search: (q) => ipcRenderer.invoke('search', q),
-  getStreamUrl: (id) => ipcRenderer.invoke('getStreamUrl', id),
+  getStreamUrl: (id, opts) => ipcRenderer.invoke('getStreamUrl', id, opts),
+  invalidateStream: (id) => ipcRenderer.invoke('invalidateStream', id),
   getPlaylistVideos: (id) => ipcRenderer.invoke('getPlaylistVideos', id),
   getArtistData: (args) => ipcRenderer.invoke('getArtistData', args),
 

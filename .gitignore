@@ -24,3 +24,6 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Binario que descarga prebuild
+resources/ffmpeg.exe

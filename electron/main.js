@@ -20,6 +20,7 @@ protocol.registerSchemesAsPrivileged([
 const {
   search,
   getStreamUrl,
+  invalidateStream,
   download,
   getPlaylistVideos,
   getArtistData,
@@ -258,7 +259,18 @@ app.on('window-all-closed', () => {
 
 // Búsqueda y reproducción
 ipcMain.handle('search', async (_e, q) => search(q))
-ipcMain.handle('getStreamUrl', async (_e, id) => getStreamUrl(id))
+ipcMain.handle('getStreamUrl', async (_e, id, opts) => {
+  try {
+    return { url: await getStreamUrl(id, opts || {}) }
+  } catch (err) {
+    return { error: err.message }
+  }
+})
+
+ipcMain.handle('invalidateStream', (_e, id) => {
+  invalidateStream(id)
+  return true
+})
 ipcMain.handle('getPlaylistVideos', async (_e, id) => getPlaylistVideos(id))
 ipcMain.handle('getArtistData', async (_e, args) => getArtistData(args))
 

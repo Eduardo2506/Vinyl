@@ -1889,7 +1889,12 @@ function usePlayCtl(queue) {
   const prefetch = useCallback((id) => {
     if (prefetched.current.has(id)) return
     prefetched.current.add(id)
-    window.api.getStreamUrl(id).catch(() => prefetched.current.delete(id))
+    window.api
+      .getStreamUrl(id)
+      .then((res) => {
+        if (res?.error) prefetched.current.delete(id)
+      })
+      .catch(() => prefetched.current.delete(id))
   }, [])
 
   const play = useCallback(
@@ -3791,7 +3796,10 @@ function Player({ showPanel, onTogglePanel, onToggleFullScreen, miniOpen, onTogg
     handleEnded,
     cycleRepeat,
     setVolume,
-    toggleMute
+    toggleMute,
+    playbackError,
+    clearPlaybackError,
+    refreshStream
   } = usePlayer()
   const dominantColor = usePlayer((s) => s.dominantColor)
   const activeColor = dominantColor || '#DC2659'
@@ -3835,6 +3843,8 @@ function Player({ showPanel, onTogglePanel, onToggleFullScreen, miniOpen, onTogg
 
   // Al cambiar de canción: pausa la actual de inmediato (antes de que llegue la nueva URL)
   // para no oír la anterior mientras se carga el stream de la siguiente.
+  const retriedRef = useRef(false)
+
   useEffect(() => {
     const a = audioRef.current
     if (!a) return
@@ -3842,6 +3852,7 @@ function Player({ showPanel, onTogglePanel, onToggleFullScreen, miniOpen, onTogg
     try { a.removeAttribute('src'); a.load() } catch {}
     setProgress(0)
     setDuration(0)
+    retriedRef.current = false
   }, [current?.id])
 
   useEffect(() => {
@@ -4096,6 +4107,22 @@ function Player({ showPanel, onTogglePanel, onToggleFullScreen, miniOpen, onTogg
         </button>
       </div>
 
+      {playbackError && (
+        <div
+          className="absolute left-0 right-0 bottom-full mx-4 mb-2 flex items-center gap-3 rounded-lg px-4 py-2.5 text-sm bg-carbon-900/95 backdrop-blur border border-ruby-soft shadow-lg"
+          role="alert"
+        >
+          <span className="flex-1 text-bone-100">{playbackError}</span>
+          <button
+            onClick={clearPlaybackError}
+            className="text-bone-400 hover:text-bone-100 px-2"
+            aria-label="Cerrar aviso"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       <audio
         ref={audioRef}
         onTimeUpdate={(e) => setProgress(e.currentTarget.currentTime)}
@@ -4107,6 +4134,18 @@ function Player({ showPanel, onTogglePanel, onToggleFullScreen, miniOpen, onTogg
           }
         }}
         onEnded={handleEnded}
+        onError={() => {
+          if (!current?.streamUrl) return
+          if (retriedRef.current) {
+            usePlayer.setState({
+              isPlaying: false,
+              playbackError: 'Se perdió la conexión con el audio de esta canción.'
+            })
+            return
+          }
+          retriedRef.current = true
+          refreshStream()
+        }}
         className="hidden"
       />
     </footer>

@@ -32,6 +32,14 @@ function resolveYtdlpBin() {
 
 let YTDLP_BIN = resolveYtdlpBin()
 
+function ffmpegArgs() {
+  const bundled = app.isPackaged
+    ? path.join(process.resourcesPath, 'ffmpeg.exe')
+    : path.join(__dirname, '..', 'resources', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg')
+  if (fs.existsSync(bundled)) return ['--ffmpeg-location', bundled]
+  return []
+}
+
 const VALID_BROWSERS = new Set(['chrome', 'firefox', 'edge', 'brave', 'opera', 'vivaldi', 'chromium', 'safari'])
 function cookieArgs() {
   const s = settings.getSettings()
@@ -198,24 +206,69 @@ const streamCache = new Map() // id -> { url, expiresAt }
 const inflight = new Map()    // id -> Promise<url> (deduplica llamadas concurrentes)
 const STREAM_TTL_MS = 4 * 60 * 60 * 1000
 
-async function getStreamUrl(id) {
+function explainYtdlpError(err) {
+  const raw = `${err?.stderr || ''} ${err?.message || ''}`
+  if (/HTTP Error 429|Too Many Requests/i.test(raw)) {
+    return 'YouTube está limitando las peticiones desde tu conexión (error 429). ' +
+      'Configura tus cookies en Configuración para seguir escuchando.'
+  }
+  if (/confirm.+not a bot|Sign in to confirm/i.test(raw)) {
+    return 'YouTube pide verificar que no eres un bot. ' +
+      'Configura tus cookies en Configuración para seguir escuchando.'
+  }
+  if (/Video unavailable|Private video|removed by the uploader/i.test(raw)) {
+    return 'Esta canción ya no está disponible en YouTube.'
+  }
+  if (/getaddrinfo|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET|Failed to resolve|Temporary failure|urlopen error|No address associated/i.test(raw)) {
+    return 'No hay conexión a internet.'
+  }
+  if (/age-restricted|age restricted|confirm your age|Sign in to view this video/i.test(raw)) {
+    return 'Esta canción tiene restricción de edad. Configura tus cookies para reproducirla.'
+  }
+  return 'No se pudo obtener el audio de esta canción.'
+}
+
+function isPermanent(err) {
+  const raw = `${err?.stderr || ''} ${err?.message || ''}`
+  return /Video unavailable|Private video|removed by the uploader|HTTP Error 429|confirm.+not a bot|Sign in to confirm/i.test(raw)
+}
+
+function invalidateStream(id) {
+  streamCache.delete(id)
+}
+
+async function getStreamUrl(id, { force = false } = {}) {
   const now = Date.now()
+  if (force) streamCache.delete(id)
   const cached = streamCache.get(id)
   if (cached && cached.expiresAt > now) return cached.url
 
-  if (inflight.has(id)) return inflight.get(id)
+  if (!force && inflight.has(id)) return inflight.get(id)
 
   const p = (async () => {
-    const { stdout } = await execFileP(YTDLP_BIN, [
-      ...cookieArgs(),
-      '-f',
-      'bestaudio',
-      '-g',
-      `https://www.youtube.com/watch?v=${id}`
-    ])
-    const url = stdout.trim()
-    streamCache.set(id, { url, expiresAt: Date.now() + STREAM_TTL_MS })
-    return url
+    let lastErr
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const { stdout } = await execFileP(YTDLP_BIN, [
+          ...cookieArgs(),
+          '-f',
+          'bestaudio',
+          '-g',
+          `https://www.youtube.com/watch?v=${id}`
+        ])
+        const url = stdout.trim()
+        if (!url) throw new Error('yt-dlp no devolvió ninguna URL')
+        streamCache.set(id, { url, expiresAt: Date.now() + STREAM_TTL_MS })
+        return url
+      } catch (err) {
+        lastErr = err
+        if (isPermanent(err)) break
+        if (attempt === 0) await new Promise((r) => setTimeout(r, 700))
+      }
+    }
+    const friendly = new Error(explainYtdlpError(lastErr))
+    friendly.cause = lastErr
+    throw friendly
   })()
     .finally(() => inflight.delete(id))
 
@@ -228,6 +281,7 @@ function download(id, onProgress) {
     const outTemplate = path.join(musicDir(), `${id}.%(ext)s`)
     const proc = spawn(YTDLP_BIN, [
       ...cookieArgs(),
+      ...ffmpegArgs(),
       '-x',
       '--audio-format',
       'm4a',
@@ -427,6 +481,7 @@ function ensureLatestInBackground() {
 module.exports = {
   search,
   getStreamUrl,
+  invalidateStream,
   download,
   musicDir,
   getPlaylistVideos,
