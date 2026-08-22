@@ -1,6 +1,6 @@
 {
   "name": "vinyl",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Reproductor de música local con backend yt-dlp",
   "author": "Eduardo Castro",
   "main": "electron/main.js",
